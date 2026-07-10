@@ -1,14 +1,21 @@
 # Resume/Job-Fit Scanner
 
 A single, stateless Agentic Service Provider (ASP) tool for the OKX.AI
-Genesis Hackathon: `analyze_resume_fit` compares pasted resume text against
-a pasted job description and returns a structured ATS fit report. Nothing
-else -- no resume generation, no chat, no file/image parsing, no crypto
-logic.
+Genesis Hackathon: `analyze_resume_fit` compares a resume against a target
+job description and returns a structured ATS fit report. Nothing else --
+no resume generation, no chat, no crypto logic.
 
 ## What it does
 
-Input: `resume_text`, `job_description_text` (both plain pasted text).
+Input: `job_description_text` (plain pasted job posting text, required),
+plus the resume as **either**:
+- `resume_text` -- plain pasted text, or
+- `resume_file_base64` + `resume_file_type` -- a base64-encoded PDF, DOCX,
+  or TXT file (max 5MB), for callers that want to upload a file instead of
+  pasting.
+
+Provide exactly one of the two resume forms; see `core/file_extract.py` for
+the PDF/DOCX -> text conversion (deterministic, no LLM involved).
 
 Output (JSON):
 
@@ -63,30 +70,36 @@ pipeline, in order:
 The model never invents the score or the gap list; it can only reword facts
 that were already decided by steps 1-3.
 
-**Known limitation:** because this version only accepts pasted plain text
-(no file upload), "formatting issues" are detected via textual proxies (pipe
+**Known limitation:** whether the resume arrives as pasted text or an
+uploaded PDF/DOCX, `core/formatting.py`'s checks all run on the resulting
+plain text -- so "formatting issues" are detected via textual proxies (pipe
 characters, long unbroken lines, missing headers/dates, icon glyphs) rather
-than by inspecting an actual `.docx`/PDF's tables, text boxes, or fonts. A
-real Word table won't survive being pasted as plain text anyway -- so this
-is the practical ceiling for a text-only input, not a shortcut taken to save
-time.
+than by inspecting the original file's actual tables, text boxes, or fonts
+directly. `_extract_docx` does pull text out of real Word tables (so it
+isn't silently dropped -- see `tests/test_file_extract.py`), but by the time
+`check_table_like_layout` runs, a table only shows up as flattened
+`" | "`-joined text, the same textual proxy a pasted table would produce.
+This is the practical ceiling given the analysis runs on text, not a
+shortcut taken to save time.
 
 ## Project layout
 
 ```
 core/
   skills_taxonomy.py   curated term list + synonyms (no LLM)
-  extract.py           JD -> weighted requirement list (no LLM)
+  extract.py           JD -> weighted requirement list (no LLM, injection-filtered)
   match.py             requirements vs resume -> matched/missing/fit_score (no LLM)
   formatting.py        ATS structural issue checks (no LLM)
-  phrasing.py           facts -> plain English (LLM optional, verified)
+  phrasing.py          facts -> plain English (LLM optional, verified)
+  file_extract.py      PDF/DOCX/TXT -> plain text (no LLM)
   analyze.py           input validation + orchestrates the above
 mcp_server/
   billing_stub.py      marked integration point for OKX.AI pay-per-call billing (not implemented)
-  server.py            thin MCP tool wrapper around core.analyze
+  server.py            thin MCP tool wrapper around core.analyze + core.file_extract
 tests/
-  samples.py           3 synthetic, clearly-fake resume/JD pairs
+  samples.py           4 synthetic, clearly-fake resume/JD pairs (incl. a prompt-injection attempt)
   test_analyze.py      end-to-end assertions against those pairs
+  test_file_extract.py PDF/DOCX/TXT upload path, incl. a synthetic table-based DOCX
 ```
 
 `core/` has no dependency on `mcp_server/` -- it's a plain Python function

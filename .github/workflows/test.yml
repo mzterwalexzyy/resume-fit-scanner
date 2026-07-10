@@ -12,5 +12,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
       - name: Run test harness
         run: python -m tests.test_analyze
+      - name: Run file-extraction tests
+        run: python -m tests.test_file_extract

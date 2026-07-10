@@ -21,6 +21,7 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 from core.analyze import analyze_resume_fit as _analyze_resume_fit
+from core.file_extract import FileExtractionError, extract_text_from_file
 from mcp_server.billing_stub import verify_payment
 
 mcp = FastMCP(
@@ -44,21 +45,44 @@ mcp = FastMCP(
         "formatting issues likely to break automated ATS parsing, concrete "
         "rewrite suggestions tied to those specific gaps, and a one-sentence "
         "plain-English summary.\n\n"
-        "Input: two plain pasted text fields -- resume_text (the candidate's "
-        "resume content) and job_description_text (the target job posting "
-        "content). No file or image upload; paste plain text only.\n\n"
-        "This is a single stateless call: no resume or job description data "
-        "is stored, logged, or retained after the response is returned.\n\n"
-        "If either input is empty, too short, or doesn't look like resume/"
-        "job-description content, the tool returns a rejection object "
+        "Input: job_description_text (plain pasted job posting text, "
+        "required) plus the resume, given EITHER as resume_text (pasted "
+        "plain text) OR as resume_file_base64 + resume_file_type (a base64-"
+        "encoded PDF, DOCX, or TXT file, max 5MB) -- provide exactly one of "
+        "the two resume forms.\n\n"
+        "This is a single stateless call: no resume, job description, or "
+        "uploaded file content is stored, logged, or retained after the "
+        "response is returned.\n\n"
+        "If input is missing/empty, an uploaded file can't be parsed (wrong "
+        "type, corrupt, password-protected, or a scanned image with no text "
+        "layer), or the text doesn't look like resume/job-description "
+        "content, the tool returns a rejection object "
         "({\"rejected\": true, \"reason\": ...}) instead of a fabricated score."
     ),
 )
-def analyze_resume_fit(resume_text: str, job_description_text: str) -> dict:
+def analyze_resume_fit(
+    job_description_text: str,
+    resume_text: str = "",
+    resume_file_base64: str = "",
+    resume_file_type: str = "",
+) -> dict:
     # Integration point for OKX.AI's pay-per-call (X Layer / USDT) billing
     # step. See mcp_server/billing_stub.py -- currently a no-op stub that
     # always allows the call through; real verification wires in here.
     verify_payment()
+
+    if resume_text.strip() and resume_file_base64:
+        return {
+            "rejected": True,
+            "reason": "Provide the resume as either resume_text or a resume "
+            "file, not both.",
+        }
+
+    if resume_file_base64:
+        try:
+            resume_text = extract_text_from_file(resume_file_base64, resume_file_type)
+        except FileExtractionError as e:
+            return {"rejected": True, "reason": str(e)}
 
     return _analyze_resume_fit(resume_text, job_description_text)
 

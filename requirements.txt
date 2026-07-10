@@ -1,6 +1,14 @@
 # Required: MCP server wrapper (mcp_server/server.py)
 mcp>=1.0.0
 
+# Required: resume file upload support (core/file_extract.py)
+pypdf>=4.0.0
+python-docx>=1.1.0
+
+# Test-only: generates a synthetic PDF sample in tests/samples.py. Not
+# imported by any production code path.
+fpdf2>=2.7.0
+
 # Optional: only imported if ANTHROPIC_API_KEY is set, to rephrase
 # suggestions/summary more naturally (core/phrasing.py). The core logic and
 # test harness run fully without this installed or configured.
