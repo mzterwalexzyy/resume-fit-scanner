@@ -94,6 +94,24 @@ def analyze_resume_fit(resume_text: str, job_description_text: str) -> dict:
         return {"rejected": True, "reason": error}
 
     requirements = extract_requirements(job_description_text)
+    if not requirements:
+        # extract_requirements found zero taxonomy/skill terms and zero
+        # regex-derived candidate phrases -- there's nothing concrete to
+        # compare the resume against. Reporting a numeric score here (even
+        # 0%) would look like "we compared and found a total mismatch" when
+        # what actually happened is "we couldn't identify what to check" --
+        # exactly the fabricated-score case the spec says never to produce.
+        return {
+            "rejected": True,
+            "reason": (
+                "Could not identify any specific skills, qualifications, or "
+                "requirements in this job description to compare against the "
+                "resume. Try a job description with a more explicit "
+                "'Requirements' or 'Qualifications' section listing concrete "
+                "skills, tools, or experience."
+            ),
+        }
+
     matched, missing, fit_score = compare(requirements, resume_text)
     formatting_issues, formatting_fixes = find_formatting_issues(resume_text)
     suggestions, summary = phrase_output(missing, formatting_fixes, fit_score)

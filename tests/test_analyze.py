@@ -81,6 +81,13 @@ def main():
         _assert(banned not in blob,
                 f"injection payload '{banned}' leaked into the tool's JSON output")
 
+    resume_e, jd_e = PAIRS["no_extractable_requirements"]
+    result_e = run_case("no_extractable_requirements", resume_e, jd_e)
+    _assert(result_e.get("rejected") is True,
+            "a JD with zero extractable requirements must be rejected, not scored 0%")
+    _assert("fit_score" not in result_e,
+            "must not report a fabricated-looking score when nothing could be compared")
+
     print("\nAll assertions passed.")
 
 
