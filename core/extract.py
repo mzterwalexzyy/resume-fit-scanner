@@ -39,7 +39,11 @@ _INJECTION_PATTERNS = re.compile(
     r"|forget (?:everything|all)"
     r"|reveal your|print your (?:instructions|prompt)"
     r"|assistant:|system:|user:"
-    r"|</?\w+>|\{\{.*\}\}",
+    r"|</?\w+>|\{\{.*\}\}"
+    # A legitimate resume/JD never needs to name this tool's own JSON
+    # output fields -- a candidate phrase that does is trying to manipulate
+    # a careless downstream parser (of *our* output), not describe a skill.
+    r"|fit_score|missing_keywords|formatting_issues",
     re.IGNORECASE,
 )
 # Legitimate skill/tool phrases never need these characters; presence is a
@@ -105,6 +109,36 @@ def _taxonomy_matches(body: str):
     return found
 
 
+def _join_wrapped_lines(body: str) -> str:
+    """Collapse hard-wrapped prose back into one logical line per sentence
+    block, so a signal phrase (e.g. "experience in X") isn't separated from
+    a negation cue (e.g. "don't need") that landed on the previous line
+    purely because of where the source text happened to wrap. Explicit
+    bullet lines are left as their own separate lines -- those are
+    intentionally itemized, not wrapped.
+    """
+    bullet_start_re = re.compile(r"^\s*[-*•]")
+    out_lines = []
+    buffer = []
+
+    def flush():
+        if buffer:
+            out_lines.append(" ".join(buffer))
+            buffer.clear()
+
+    for line in body.splitlines():
+        if not line.strip():
+            flush()
+            out_lines.append("")
+        elif bullet_start_re.match(line):
+            flush()
+            out_lines.append(line)
+        else:
+            buffer.append(line.strip())
+    flush()
+    return "\n".join(out_lines)
+
+
 def _bullet_phrase_candidates(body: str):
     """Pull short candidate phrases out of bullet/requirement-style lines.
 
@@ -112,16 +146,32 @@ def _bullet_phrase_candidates(body: str):
     with" / "proficiency in" / "knowledge of" style signal phrases, then
     splits on commas/and/or to get short noun-phrase-ish candidates.
     """
+    body = _join_wrapped_lines(body)
     candidates = []
     signal_re = re.compile(
         r"(?:experience (?:with|in)|proficien(?:cy|t) (?:with|in)|"
         r"knowledge of|familiarity with|skilled in|expertise in)\s+(.+)",
         re.IGNORECASE,
     )
+    # A common real-world phrasing this simple regex can't otherwise tell
+    # apart from an actual requirement: "you don't need prior experience
+    # with X" describes the *absence* of a requirement, not the presence of
+    # one. Detecting negation scope in general is out of reach for a regex,
+    # but this specific pattern (negation cue immediately before the signal
+    # phrase) is common enough to guard against directly.
+    negated_signal_re = re.compile(
+        r"(?:don'?t|do not|doesn'?t|does not|no|not|without)\s+(?:need|require)\w*\b"
+        r"[^.!?]{0,60}?"  # bounded to the same sentence, not the whole paragraph
+        r"(?:experience (?:with|in)|proficien(?:cy|t) (?:with|in)|"
+        r"knowledge of|familiarity with)",
+        re.IGNORECASE,
+    )
     bullet_re = re.compile(r"^\s*[-*•]\s*(.+)")
 
     for line in body.splitlines():
         segment = None
+        if negated_signal_re.search(line):
+            continue
         m = signal_re.search(line)
         if m:
             segment = m.group(1)
@@ -153,6 +203,59 @@ def _bullet_phrase_candidates(body: str):
     return candidates
 
 
+# Non-technical job postings frequently list responsibilities/qualifications
+# as "Label: description." lines (e.g. "Reliability: You are someone who...")
+# rather than "- bullet" or "experience with X" phrasing. The label itself
+# is already a clean, concise requirement name -- no need to parse the
+# description sentence at all for this pattern.
+_LABEL_COLON_RE = re.compile(r"^\s*([A-Za-z][A-Za-z /&-]{1,40}):\s+\S")
+
+# Generic prefixes that use the same "Label: text" shape but aren't actual
+# requirement/responsibility names.
+_LABEL_COLON_EXCLUDE = {
+    "note", "notes", "important", "disclaimer", "tip", "example",
+    "about", "summary", "overview", "warning", "please note", "n b",
+}
+
+
+def _label_colon_candidates(body: str):
+    candidates = []
+    for line in body.splitlines():
+        m = _LABEL_COLON_RE.match(line)
+        if not m:
+            continue
+        label = m.group(1).strip().lower()
+        if label in _LABEL_COLON_EXCLUDE:
+            continue
+        words = label.split()
+        if not (1 <= len(words) <= 4):
+            continue
+        if all(w in GENERIC_STOPWORDS for w in words):
+            continue
+        if not _is_safe_candidate_phrase(label):
+            continue
+        candidates.append(label)
+    return candidates
+
+
+def _overlaps_taxonomy(phrase: str) -> bool:
+    """True if phrase is already effectively covered by a taxonomy term.
+
+    Word-boundary aware on purpose: a naive substring check (`"r" in
+    phrase`) would wrongly flag "categorizing" or "proficiency" as covered
+    by the single-letter taxonomy entry "r" (the R language), since "r"
+    trivially occurs as a substring inside many ordinary words.
+    """
+    for t in SKILLS_TAXONOMY:
+        if phrase == t:
+            return True
+        if re.search(r"\b" + re.escape(t) + r"\b", phrase):
+            return True
+        if re.search(r"\b" + re.escape(phrase) + r"\b", t):
+            return True
+    return False
+
+
 def extract_requirements(job_description_text: str):
     """Return a deduped, weighted list of requirement dicts:
     [{"term": str, "weight": int}], sorted by weight desc then first-seen
@@ -167,10 +270,11 @@ def extract_requirements(job_description_text: str):
                 weights[term] = weight
             if term not in order:
                 order.append(term)
-        for phrase in _bullet_phrase_candidates(body):
+        regex_candidates = _bullet_phrase_candidates(body) + _label_colon_candidates(body)
+        for phrase in regex_candidates:
             # Only keep regex-derived phrases that aren't already covered by
             # a taxonomy term, to avoid near-duplicate entries.
-            if any(phrase == t or phrase in t or t in phrase for t in SKILLS_TAXONOMY):
+            if _overlaps_taxonomy(phrase):
                 continue
             if phrase not in weights or weight > weights[phrase]:
                 weights[phrase] = weight

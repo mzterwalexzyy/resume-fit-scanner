@@ -81,11 +81,25 @@ def main():
         _assert(banned not in blob,
                 f"injection payload '{banned}' leaked into the tool's JSON output")
 
-    resume_e, jd_e = PAIRS["no_extractable_requirements"]
-    result_e = run_case("no_extractable_requirements", resume_e, jd_e)
-    _assert(result_e.get("rejected") is True,
+    resume_e, jd_e = PAIRS["nontechnical_jd_with_labeled_quals"]
+    result_e = run_case("nontechnical_jd_with_labeled_quals", resume_e, jd_e)
+    _assert("rejected" not in result_e,
+            "a JD with 'Label: description' qualifications should now extract "
+            "requirements and score normally, not reject")
+    _assert(isinstance(result_e["fit_score"], int) and 0 <= result_e["fit_score"] <= 100,
+            "fit_score must be a real int 0-100")
+    # Regression guard for the "r" (R language) substring-collision bug:
+    # these should never disappear from missing_keywords just because they
+    # happen to contain the letter "r".
+    missing_lower = [k.lower() for k in result_e["missing_keywords"]]
+    _assert(any("categorizing" in k for k in missing_lower),
+            "'text categorizing' should not be dropped by the taxonomy dedup check")
+
+    resume_f, jd_f = PAIRS["no_extractable_requirements"]
+    result_f = run_case("no_extractable_requirements", resume_f, jd_f)
+    _assert(result_f.get("rejected") is True,
             "a JD with zero extractable requirements must be rejected, not scored 0%")
-    _assert("fit_score" not in result_e,
+    _assert("fit_score" not in result_f,
             "must not report a fabricated-looking score when nothing could be compared")
 
     print("\nAll assertions passed.")
