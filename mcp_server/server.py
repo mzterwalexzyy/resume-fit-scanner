@@ -16,6 +16,8 @@ expects additional metadata beyond a standard MCP tool definition (custom
 manifest fields, a specific handshake, etc.), that is NOT covered here --
 flagging that explicitly rather than guessing at an unfamiliar API shape.
 """
+import os
+
 from mcp.server.fastmcp import FastMCP
 
 from core.analyze import analyze_resume_fit as _analyze_resume_fit
@@ -28,6 +30,8 @@ mcp = FastMCP(
         "description and returns a structured ATS fit report. Single "
         "stateless call, no data stored."
     ),
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", 8000)),
 )
 
 
@@ -71,4 +75,7 @@ def ping() -> dict:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    # streamable-http is the transport OKX.AI's ASP endpoint check expects
+    # (a real https:// URL) -- stdio only works for local single-process
+    # testing (e.g. the `mcp.call_tool` checks used during development).
+    mcp.run(transport="streamable-http")
