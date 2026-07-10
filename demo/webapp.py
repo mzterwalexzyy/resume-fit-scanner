@@ -2,24 +2,25 @@
 Local, zero-dependency demo web page for recording a screen-capture demo.
 
 NOT part of the ASP/MCP tool -- this is a dev convenience that calls the
-exact same core.analyze.analyze_resume_fit() the deployed MCP server uses,
-just wrapped in a plain HTML form instead of the MCP protocol, so it's easy
-to paste text into a browser and watch the score/keywords/suggestions update
-live on screen.
+exact same core.analyze.analyze_resume_fit()/core.file_extract code the
+deployed MCP server uses, just wrapped in a plain HTML form instead of the
+MCP protocol, so it's easy to paste text (or upload a real PDF/DOCX resume)
+into a browser and watch the score/keywords/suggestions update live on
+screen.
 
 Run with:  py demo/webapp.py     (from the project root)
 Then open: http://127.0.0.1:8765
 """
+import base64
 import html
-import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.analyze import analyze_resume_fit
+from core.file_extract import SUPPORTED_FILE_TYPES, FileExtractionError, extract_text_from_file
 from tests.samples import PAIRS
 
 PORT = 8765
@@ -37,9 +38,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   .row {{ display: flex; gap: 20px; margin-bottom: 16px; }}
   .col {{ flex: 1; }}
   label {{ font-weight: 600; font-size: 13px; display: block; margin-bottom: 6px; }}
-  textarea {{ width: 100%; height: 220px; box-sizing: border-box; padding: 10px;
+  textarea {{ width: 100%; height: 190px; box-sizing: border-box; padding: 10px;
               font-family: monospace; font-size: 13px; border: 1px solid #ccc;
               border-radius: 6px; resize: vertical; }}
+  .or-divider {{ text-align: center; color: #999; font-size: 12px; margin: 10px 0; }}
+  .file-row {{ display: flex; align-items: center; gap: 10px; }}
+  input[type="file"] {{ font-size: 13px; }}
+  .hint {{ color: #999; font-size: 12px; margin-top: 4px; }}
   .buttons {{ margin: 16px 0; display: flex; gap: 10px; flex-wrap: wrap; }}
   button {{ background: #14b8a6; color: white; border: none; padding: 10px 18px;
             border-radius: 6px; font-size: 14px; cursor: pointer; }}
@@ -59,12 +64,17 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
   <h1>Resume/Job-Fit Scanner -- local demo</h1>
-  <div class="sub">Calls the exact same core.analyze.analyze_resume_fit() code running on the live deployed ASP.</div>
-  <form method="POST" action="/">
+  <div class="sub">Calls the exact same core.analyze / core.file_extract code running on the live deployed ASP.</div>
+  <form method="POST" action="/" enctype="multipart/form-data">
     <div class="row">
       <div class="col">
         <label>Resume text</label>
         <textarea name="resume_text" placeholder="Paste resume text here...">{resume_text}</textarea>
+        <div class="or-divider">-- or --</div>
+        <div class="file-row">
+          <input type="file" name="resume_file" accept=".pdf,.docx,.txt">
+        </div>
+        <div class="hint">Upload a real PDF/DOCX/TXT resume instead of pasting above (max 5MB). Provide one or the other, not both.</div>
       </div>
       <div class="col">
         <label>Job description text</label>
@@ -105,7 +115,7 @@ def render_results(result):
       {keywords_html}
 
       <div class="section-title">Formatting issues</div>
-      {issues_html if result["formatting_issues"] else issues_html}
+      {issues_html}
 
       <div class="section-title">Suggestions</div>
       <ul>{suggestions_html}</ul>
@@ -131,22 +141,93 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length).decode("utf-8")
-        fields = parse_qs(body)
+        body = self.rfile.read(length)
 
-        load = fields.get("load", [None])[0]
+        fields, files = _parse_multipart(body, self.headers.get("Content-Type", ""))
+
+        load = fields.get("load")
         if load and load in PAIRS:
             resume_text, jd_text = PAIRS[load]
             self._send_page(resume_text.strip(), jd_text.strip())
             return
 
-        resume_text = fields.get("resume_text", [""])[0]
-        jd_text = fields.get("job_description_text", [""])[0]
-        result = analyze_resume_fit(resume_text, jd_text)
+        resume_text = fields.get("resume_text", "")
+        jd_text = fields.get("job_description_text", "")
+        uploaded = files.get("resume_file")
+
+        if uploaded and uploaded[1]:
+            filename, file_bytes = uploaded
+            file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            if resume_text.strip():
+                result = {
+                    "rejected": True,
+                    "reason": "Provide the resume as either pasted text or an uploaded file, not both.",
+                }
+            elif file_type not in SUPPORTED_FILE_TYPES:
+                result = {
+                    "rejected": True,
+                    "reason": f"Unsupported file type '{file_type}'. Supported: "
+                    f"{', '.join(sorted(SUPPORTED_FILE_TYPES))}.",
+                }
+            else:
+                try:
+                    resume_text = extract_text_from_file(
+                        base64.b64encode(file_bytes).decode("ascii"), file_type
+                    )
+                    result = analyze_resume_fit(resume_text, jd_text)
+                except FileExtractionError as e:
+                    result = {"rejected": True, "reason": str(e)}
+        else:
+            result = analyze_resume_fit(resume_text, jd_text)
+
         self._send_page(resume_text, jd_text, result)
 
     def log_message(self, format, *args):
         pass  # keep the terminal quiet during recording
+
+
+def _parse_multipart(body: bytes, content_type: str):
+    """Minimal multipart/form-data parser (no `cgi` module -- removed in
+    Python 3.13+). Returns (text_fields: dict, files: dict[name -> (filename, bytes)]).
+    """
+    fields = {}
+    files = {}
+    if "boundary=" not in content_type:
+        return fields, files
+    boundary = content_type.split("boundary=", 1)[1].strip().strip('"').encode("ascii")
+
+    for part in body.split(b"--" + boundary):
+        part = part.strip(b"\r\n")
+        if not part or part == b"--":
+            continue
+        header_blob, sep, content = part.partition(b"\r\n\r\n")
+        if not sep:
+            continue
+        headers = header_blob.decode("utf-8", errors="replace")
+        # Content-Disposition is one line among possibly several headers
+        # (e.g. a following Content-Type: line for file parts) -- splitting
+        # the whole blob on ";" would bleed those other lines into the
+        # filename value, so isolate that one line first.
+        disposition_line = next(
+            (line for line in headers.split("\r\n") if line.lower().startswith("content-disposition:")),
+            "",
+        )
+        name = None
+        filename = None
+        for piece in disposition_line.split(";"):
+            piece = piece.strip()
+            if piece.startswith("name="):
+                name = piece.split("=", 1)[1].strip('"')
+            elif piece.startswith("filename="):
+                filename = piece.split("=", 1)[1].strip('"')
+        if name is None:
+            continue
+        content = content[:-2] if content.endswith(b"\r\n") else content
+        if filename is not None:
+            files[name] = (filename, content)
+        else:
+            fields[name] = content.decode("utf-8", errors="replace")
+    return fields, files
 
 
 if __name__ == "__main__":
