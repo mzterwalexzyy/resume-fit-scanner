@@ -1,0 +1,7 @@
+# Required: MCP server wrapper (mcp_server/server.py)
+mcp>=1.0.0
+
+# Optional: only imported if ANTHROPIC_API_KEY is set, to rephrase
+# suggestions/summary more naturally (core/phrasing.py). The core logic and
+# test harness run fully without this installed or configured.
+anthropic>=0.40.0

@@ -1,0 +1,173 @@
+# Resume/Job-Fit Scanner
+
+A single, stateless Agentic Service Provider (ASP) tool for the OKX.AI
+Genesis Hackathon: `analyze_resume_fit` compares pasted resume text against
+a pasted job description and returns a structured ATS fit report. Nothing
+else -- no resume generation, no chat, no file/image parsing, no crypto
+logic.
+
+## What it does
+
+Input: `resume_text`, `job_description_text` (both plain pasted text).
+
+Output (JSON):
+
+```json
+{
+  "fit_score": 79,
+  "missing_keywords": ["flask", "database design", "graphql", "kubernetes"],
+  "formatting_issues": [],
+  "suggestions": ["Add a specific, quantified bullet showing your experience with \"flask\" -- ..."],
+  "summary": "Your resume matches 79% of this role's key requirements -- here's how to close the gap."
+}
+```
+
+If the input is empty, too short, or doesn't look like resume/job-description
+text, it returns `{"rejected": true, "reason": "..."}` instead of a score.
+
+## How the score is actually computed (what's real, what's not)
+
+Everything that produces `fit_score`, `missing_keywords`, and
+`formatting_issues` is **plain deterministic code, not an LLM call**. Given
+the same two input strings, you get the exact same output every time. The
+pipeline, in order:
+
+1. **`core/extract.py`** -- pulls candidate requirements out of the job
+   description. Two mechanisms, both rule-based:
+   - a curated ~200-term skills/tools/soft-skills taxonomy
+     (`core/skills_taxonomy.py`), matched by word boundary;
+   - a handful of regex patterns over bullet lines and signal phrases
+     ("experience with X", "knowledge of Y") to catch requirement phrases
+     the taxonomy doesn't already list.
+   Terms found under a "Requirements"/"Qualifications" header are weighted
+   2x; terms under "Preferred"/"Nice to have" are weighted 1x.
+2. **`core/match.py`** -- checks each requirement's presence in the resume
+   text (word-boundary match, plus a small synonym table for things like
+   `js`/`javascript`, `k8s`/`kubernetes`). `fit_score` is the weighted
+   percentage of requirements found present. This is the only place the
+   number is computed -- nothing downstream can change it.
+3. **`core/formatting.py`** -- rule-based checks for ATS-breaking patterns
+   in plain text: no standard section headers, no dates near an experience
+   section, pipe/tab/column layouts (table proxies), 300+ character
+   unbroken lines (text-box proxies), and icon/dingbat glyphs.
+4. **`core/phrasing.py`** -- **this is the only step that touches an LLM**,
+   and only for wording. It takes the already-computed missing keywords,
+   formatting fixes, and score, and either:
+   - renders them through fixed English templates (default, fully offline,
+     what the test harness uses), or
+   - if `ANTHROPIC_API_KEY` is set, asks Claude to rephrase the same facts
+     more naturally -- then verifies the response still contains the exact
+     score and every named missing keyword before using it, silently
+     falling back to the template otherwise.
+
+The model never invents the score or the gap list; it can only reword facts
+that were already decided by steps 1-3.
+
+**Known limitation:** because this version only accepts pasted plain text
+(no file upload), "formatting issues" are detected via textual proxies (pipe
+characters, long unbroken lines, missing headers/dates, icon glyphs) rather
+than by inspecting an actual `.docx`/PDF's tables, text boxes, or fonts. A
+real Word table won't survive being pasted as plain text anyway -- so this
+is the practical ceiling for a text-only input, not a shortcut taken to save
+time.
+
+## Project layout
+
+```
+core/
+  skills_taxonomy.py   curated term list + synonyms (no LLM)
+  extract.py           JD -> weighted requirement list (no LLM)
+  match.py             requirements vs resume -> matched/missing/fit_score (no LLM)
+  formatting.py        ATS structural issue checks (no LLM)
+  phrasing.py           facts -> plain English (LLM optional, verified)
+  analyze.py           input validation + orchestrates the above
+mcp_server/
+  billing_stub.py      marked integration point for OKX.AI pay-per-call billing (not implemented)
+  server.py            thin MCP tool wrapper around core.analyze
+tests/
+  samples.py           3 synthetic, clearly-fake resume/JD pairs
+  test_analyze.py      end-to-end assertions against those pairs
+```
+
+`core/` has no dependency on `mcp_server/` -- it's a plain Python function
+(`analyze_resume_fit(resume_text, job_description_text) -> dict`) that any
+transport can wrap without restructuring.
+
+## Running the test harness
+
+```bash
+cd resume-fit-scanner
+py -m tests.test_analyze     # or: python -m tests.test_analyze
+```
+
+Runs three synthetic cases and asserts on the output:
+
+- **strong_match** -- a backend-engineer resume against a matching JD;
+  expects a high score (currently ~79%) with a handful of missing
+  nice-to-haves (Flask, GraphQL, Kubernetes).
+- **weak_match_with_formatting_issues** -- a marketing resume against a
+  senior data-scientist JD, deliberately written with a pipe-table skills
+  block, no dates, contact-icon glyphs, and a wall-of-text bullet; expects a
+  low score and all four formatting-issue types to fire.
+- **invalid_input** -- gibberish, non-resume/non-JD text; expects a
+  rejection object, not a fabricated score.
+
+No API key is required to run this -- `core/phrasing.py` falls back to
+templates whenever `ANTHROPIC_API_KEY` is unset.
+
+## MCP server wrapper
+
+`mcp_server/server.py` wraps `core.analyze.analyze_resume_fit` as a tool
+named `analyze_resume_fit` using the official `mcp` Python SDK's `FastMCP`
+helper (the standard Model Context Protocol tool-server shape), plus a
+`ping` tool for health checks.
+
+**On OKX.AI's specific integration format:** this project does not have
+reliable documented detail on any OKX.AI-specific ASP listing schema beyond
+"MCP/A2A protocols, paid in USDT, on X Layer." What's built here is a
+standard MCP tool server, since that's the protocol OKX.AI names for
+discovery/invocation -- it is *not* a guess at an OKX-specific manifest
+format, request signature, or registration payload. If OKX.AI's listing
+process needs something beyond a standard MCP tool definition, that piece
+still needs to be confirmed against their actual docs/onboarding flow.
+
+### Running locally
+
+```bash
+pip install -r requirements.txt
+py -m mcp_server.server
+```
+
+This starts the FastMCP server over stdio by default (standard MCP
+transport for local tool testing/inspection). No environment variables are
+required for the core tool to work.
+
+### Environment variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | no | Enables LLM-phrased suggestions/summary (see above). Omit to run fully offline on templates. |
+| `OKX_X_LAYER_BILLING_ENDPOINT` | no (not implemented) | Placeholder only -- see below. |
+
+### Payment / billing integration point (not implemented)
+
+Real USDT / X Layer pay-per-call billing is explicitly out of scope for
+this build -- per the brief, that's handled on the OKX.AI listing side. The
+one hook that exists is `mcp_server/billing_stub.py`'s `verify_payment()`,
+called at the top of the `analyze_resume_fit` tool handler in
+`mcp_server/server.py`. It currently always returns `True` (every call is
+allowed through). When OKX.AI's billing/metering mechanism for ASPs is
+confirmed, that check's body is the one place to wire it in -- nothing else
+in `core/` or `server.py` needs to change.
+
+## Privacy
+
+- Stateless: no resume or job-description text is written to disk, logged,
+  or cached anywhere in this codebase. Each call only ever sees the two
+  strings passed to it.
+- No name, contact info, or identifying data is requested. If a pasted
+  resume happens to contain a name/email/phone (normal for resumes), it's
+  neither stripped nor used for anything beyond the presence/absence checks
+  above -- it's never echoed back or repurposed.
+- No financial data, government IDs, or other sensitive personal data
+  categories are requested or processed.
