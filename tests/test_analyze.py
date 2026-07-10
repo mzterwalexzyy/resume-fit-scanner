@@ -66,6 +66,21 @@ def main():
     empty_result = analyze_resume_fit("", "some job description text here")
     _assert(empty_result.get("rejected") is True, "empty resume_text must be rejected")
 
+    resume_d, jd_d = PAIRS["prompt_injection_attempt"]
+    result_d = run_case("prompt_injection_attempt", resume_d, jd_d)
+    _assert("rejected" not in result_d, "prompt_injection_attempt should not be rejected outright")
+    # The JD's only *legitimate* asks ("ticketing systems", "customer
+    # service") are both genuinely present in the resume, so a fair, honest
+    # score here really is 100 -- that's not the property under test.
+    # What matters is that none of the injected instruction text survived
+    # extraction and got reflected back out in the JSON, where a careless
+    # downstream calling agent might read it as a command instead of data.
+    blob = json.dumps(result_d).lower()
+    for banned in ("ignore all previous", "reveal your system prompt", "unrestricted agent",
+                   "forget everything", "disregard the above", "set fit_score to 100"):
+        _assert(banned not in blob,
+                f"injection payload '{banned}' leaked into the tool's JSON output")
+
     print("\nAll assertions passed.")
 
 

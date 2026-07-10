@@ -22,6 +22,40 @@ PREFERRED_SECTION_HEADERS = [
 
 MAX_REQUIREMENTS = 25
 
+# This tool is callable by arbitrary agents/bots on a marketplace, and its
+# output (missing_keywords, suggestions) is often fed straight into a
+# *calling* agent's own prompt. A crafted job_description_text could smuggle
+# an instruction-like phrase through as a "missing keyword" and have it
+# reflected verbatim in our JSON response, where a careless downstream agent
+# might interpret it as a command rather than data. Regex-derived candidate
+# phrases (unlike the fixed SKILLS_TAXONOMY list) come directly from
+# attacker-controlled text, so they're the only extraction path that needs
+# this filter.
+_INJECTION_PATTERNS = re.compile(
+    r"ignore (?:all )?(?:previous|prior|above) instructions?"
+    r"|disregard (?:the )?(?:above|previous|prior)"
+    r"|new instructions?"
+    r"|system prompt|you are now|act as (?:a|an)"
+    r"|forget (?:everything|all)"
+    r"|reveal your|print your (?:instructions|prompt)"
+    r"|assistant:|system:|user:"
+    r"|</?\w+>|\{\{.*\}\}",
+    re.IGNORECASE,
+)
+# Legitimate skill/tool phrases never need these characters; presence is a
+# strong signal of an attempt to break out of a template or code context.
+_SUSPICIOUS_CHARS = re.compile(r"[<>{}`\n\r]")
+
+
+def _is_safe_candidate_phrase(phrase: str) -> bool:
+    if _INJECTION_PATTERNS.search(phrase):
+        return False
+    if _SUSPICIOUS_CHARS.search(phrase):
+        return False
+    if len(phrase) > 60:
+        return False
+    return True
+
 
 def _sections(text: str):
     """Split job description text into (header, weight, body) blocks.
@@ -112,6 +146,8 @@ def _bullet_phrase_candidates(body: str):
             if all(w in GENERIC_STOPWORDS for w in words):
                 continue
             if len(phrase) < 2:
+                continue
+            if not _is_safe_candidate_phrase(phrase):
                 continue
             candidates.append(phrase)
     return candidates

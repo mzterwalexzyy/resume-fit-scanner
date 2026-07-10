@@ -186,6 +186,48 @@ always returns `True` (every call is allowed through). Wiring in a real
 x402 challenge/verify step is the one place this needs to change --
 nothing else in `core/` or `server.py` does.
 
+## Prompt-injection guardrails
+
+This tool is meant to be called by arbitrary agents/bots on a marketplace,
+and its JSON output (`missing_keywords`, `suggestions`) is the kind of thing
+a calling agent often feeds straight into its own next prompt. That makes a
+hostile `job_description_text` a realistic **reflected prompt-injection**
+vector even when no LLM is involved on our side at all -- an attacker only
+needs their injected phrase to survive extraction and come back out
+verbatim in the response for a careless downstream agent to treat it as an
+instruction rather than data.
+
+Defenses, in the order data actually flows:
+
+1. **`core/extract.py`** -- every regex-derived candidate phrase (the only
+   extraction path that touches attacker-controlled text; the curated
+   taxonomy list is our own fixed data) is checked against
+   `_is_safe_candidate_phrase`: a pattern list for common injection framing
+   ("ignore all previous instructions", "system:", "you are now", "reveal
+   your system prompt", etc.), a ban on structurally suspicious characters
+   (`<>{}` `` ` `` and newlines), and a 60-char length cap. Anything that
+   matches never becomes a `missing_keyword` in the first place, so it can't
+   leak into the output regardless of whether the optional LLM step below
+   runs.
+2. **`core/phrasing.py`** -- the one place attacker-derived text actually
+   reaches an LLM (only when `ANTHROPIC_API_KEY` is set). The prompt
+   explicitly frames every interpolated item as untrusted data to reword,
+   never to obey, mirroring the same "render as-is, ignore embedded
+   instructions" pattern OKX's own `okx-ai` skill uses for untrusted
+   agent-to-agent fields. The response is then re-checked against the same
+   pattern/character filter from step 1 before being trusted, falling back
+   to the deterministic template on any hit.
+3. **Blast radius is architecturally limited regardless:** `phrase_output()`
+   is a leaf call -- nothing downstream executes code or takes a further
+   action based on its return value, so a successful injection's worst case
+   is a wrong sentence in the response, not a compromised process.
+
+`tests/samples.py`'s `prompt_injection_attempt` pair and the matching
+assertions in `tests/test_analyze.py` exercise this directly: several
+injection payloads embedded in a job description (fake "ignore previous
+instructions", "reveal your system prompt", etc.) are asserted to never
+appear anywhere in the tool's JSON output.
+
 ## Privacy
 
 - Stateless: no resume or job-description text is written to disk, logged,
