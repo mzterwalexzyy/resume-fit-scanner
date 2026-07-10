@@ -138,27 +138,53 @@ pip install -r requirements.txt
 py -m mcp_server.server
 ```
 
-This starts the FastMCP server over stdio by default (standard MCP
-transport for local tool testing/inspection). No environment variables are
-required for the core tool to work.
+`server.py` runs the FastMCP server over **streamable-http** (bound to
+`0.0.0.0:$PORT`, default 8000) -- not stdio -- because OKX.AI's ASP
+registration requires a real `https://` endpoint it can call, not a local
+stdio pipe. For a one-off local/stdio smoke test instead (e.g. from a
+Python REPL), call `mcp.call_tool(...)` directly as in the checks used
+during development, or override the transport in `mcp.run(...)`.
+
+### Live deployment
+
+Currently deployed at **`https://resume-fit.145-241-206-88.sslip.io/mcp`**
+(a small Oracle Cloud "Always Free" Ubuntu VM). Stack:
+
+- `resume-fit-scanner.service` (systemd) -- runs `python -m mcp_server.server`
+  under the repo's venv, `Restart=on-failure`, listens internally on
+  `0.0.0.0:8000`.
+- **Caddy** reverse-proxies `443`/`80` -> `localhost:8000` and auto-provisions
+  a real Let's Encrypt certificate. The hostname uses
+  [sslip.io](https://sslip.io) (`resume-fit.<dashed-ip>.sslip.io` always
+  resolves to `<ip>`) so no domain purchase was needed -- Let's Encrypt still
+  issues a normal trusted cert for it via HTTP-01/TLS-ALPN-01.
+- Both **OCI's cloud-level Security List** (VCN-level firewall) and the
+  instance's **local `iptables`** had to separately allow inbound 80/443 --
+  either one alone blocks Let's Encrypt's validation servers with a
+  same-symptom "timeout during connect" error, so if this ever needs
+  redeploying elsewhere, check both layers.
 
 ### Environment variables
 
 | Variable | Required | Purpose |
 |---|---|---|
+| `PORT` | no | Port the streamable-http server binds to internally. Default `8000`. |
 | `ANTHROPIC_API_KEY` | no | Enables LLM-phrased suggestions/summary (see above). Omit to run fully offline on templates. |
-| `OKX_X_LAYER_BILLING_ENDPOINT` | no (not implemented) | Placeholder only -- see below. |
 
 ### Payment / billing integration point (not implemented)
 
-Real USDT / X Layer pay-per-call billing is explicitly out of scope for
-this build -- per the brief, that's handled on the OKX.AI listing side. The
-one hook that exists is `mcp_server/billing_stub.py`'s `verify_payment()`,
-called at the top of the `analyze_resume_fit` tool handler in
-`mcp_server/server.py`. It currently always returns `True` (every call is
-allowed through). When OKX.AI's billing/metering mechanism for ASPs is
-confirmed, that check's body is the one place to wire it in -- nothing else
-in `core/` or `server.py` needs to change.
+Real pay-per-call billing is explicitly out of scope for this build -- per
+the brief, that's handled on the OKX.AI listing side. What we now know
+concretely (from OKX's own `onchainos-skills` docs, not guessed): paid
+A2MCP endpoints are expected to speak **x402** (a payment-required HTTP
+challenge/response scheme), with OKX recommending their Payment SDK
+(`okx-agent-payments-protocol`) for it -- not a generic "USDT on X Layer"
+integration as originally assumed. The one hook that exists today is
+`mcp_server/billing_stub.py`'s `verify_payment()`, called at the top of the
+`analyze_resume_fit` tool handler in `mcp_server/server.py`. It currently
+always returns `True` (every call is allowed through). Wiring in a real
+x402 challenge/verify step is the one place this needs to change --
+nothing else in `core/` or `server.py` does.
 
 ## Privacy
 
