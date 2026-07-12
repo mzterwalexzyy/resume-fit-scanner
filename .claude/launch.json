@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "demo-webapp",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["demo/webapp.py"],
+      "port": 8765
+    },
+    {
+      "name": "resume-fit-site",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["demo/site.py"],
+      "port": 8080
+    }
+  ]
+}

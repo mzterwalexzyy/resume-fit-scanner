@@ -11,7 +11,6 @@ screen.
 Run with:  py demo/webapp.py     (from the project root)
 Then open: http://127.0.0.1:8765
 """
-import base64
 import html
 import os
 import sys
@@ -20,7 +19,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.analyze import analyze_resume_fit
-from core.file_extract import SUPPORTED_FILE_TYPES, FileExtractionError, extract_text_from_file
+from demo._multipart import parse_multipart
+from demo._resume_input import resolve_resume_text
 from tests.samples import PAIRS
 
 PORT = 8765
@@ -143,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
 
-        fields, files = _parse_multipart(body, self.headers.get("Content-Type", ""))
+        fields, files = parse_multipart(body, self.headers.get("Content-Type", ""))
 
         load = fields.get("load")
         if load and load in PAIRS:
@@ -153,81 +153,18 @@ class Handler(BaseHTTPRequestHandler):
 
         resume_text = fields.get("resume_text", "")
         jd_text = fields.get("job_description_text", "")
-        uploaded = files.get("resume_file")
 
-        if uploaded and uploaded[1]:
-            filename, file_bytes = uploaded
-            file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            if resume_text.strip():
-                result = {
-                    "rejected": True,
-                    "reason": "Provide the resume as either pasted text or an uploaded file, not both.",
-                }
-            elif file_type not in SUPPORTED_FILE_TYPES:
-                result = {
-                    "rejected": True,
-                    "reason": f"Unsupported file type '{file_type}'. Supported: "
-                    f"{', '.join(sorted(SUPPORTED_FILE_TYPES))}.",
-                }
-            else:
-                try:
-                    resume_text = extract_text_from_file(
-                        base64.b64encode(file_bytes).decode("ascii"), file_type
-                    )
-                    result = analyze_resume_fit(resume_text, jd_text)
-                except FileExtractionError as e:
-                    result = {"rejected": True, "reason": str(e)}
+        resolved_text, rejection = resolve_resume_text(resume_text, files.get("resume_file"))
+        if rejection is not None:
+            result = rejection
         else:
+            resume_text = resolved_text
             result = analyze_resume_fit(resume_text, jd_text)
 
         self._send_page(resume_text, jd_text, result)
 
     def log_message(self, format, *args):
         pass  # keep the terminal quiet during recording
-
-
-def _parse_multipart(body: bytes, content_type: str):
-    """Minimal multipart/form-data parser (no `cgi` module -- removed in
-    Python 3.13+). Returns (text_fields: dict, files: dict[name -> (filename, bytes)]).
-    """
-    fields = {}
-    files = {}
-    if "boundary=" not in content_type:
-        return fields, files
-    boundary = content_type.split("boundary=", 1)[1].strip().strip('"').encode("ascii")
-
-    for part in body.split(b"--" + boundary):
-        part = part.strip(b"\r\n")
-        if not part or part == b"--":
-            continue
-        header_blob, sep, content = part.partition(b"\r\n\r\n")
-        if not sep:
-            continue
-        headers = header_blob.decode("utf-8", errors="replace")
-        # Content-Disposition is one line among possibly several headers
-        # (e.g. a following Content-Type: line for file parts) -- splitting
-        # the whole blob on ";" would bleed those other lines into the
-        # filename value, so isolate that one line first.
-        disposition_line = next(
-            (line for line in headers.split("\r\n") if line.lower().startswith("content-disposition:")),
-            "",
-        )
-        name = None
-        filename = None
-        for piece in disposition_line.split(";"):
-            piece = piece.strip()
-            if piece.startswith("name="):
-                name = piece.split("=", 1)[1].strip('"')
-            elif piece.startswith("filename="):
-                filename = piece.split("=", 1)[1].strip('"')
-        if name is None:
-            continue
-        content = content[:-2] if content.endswith(b"\r\n") else content
-        if filename is not None:
-            files[name] = (filename, content)
-        else:
-            fields[name] = content.decode("utf-8", errors="replace")
-    return fields, files
 
 
 if __name__ == "__main__":
