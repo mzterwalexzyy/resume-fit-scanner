@@ -5,6 +5,11 @@ Genesis Hackathon: `analyze_resume_fit` compares a resume against a target
 job description and returns a structured ATS fit report. Nothing else --
 no resume generation, no chat, no crypto logic.
 
+**Try it live:** https://app.145-241-206-88.sslip.io -- a public demo site
+(paste text or upload a real PDF/DOCX/TXT resume) that calls the exact same
+`core.analyze`/`core.file_extract` code the deployed MCP server runs. The
+ASP itself is registered on-chain as Agent **#4956** on X Layer.
+
 ## What it does
 
 Input: `job_description_text` (plain pasted job posting text, required),
@@ -96,8 +101,13 @@ core/
 mcp_server/
   billing_stub.py      marked integration point for OKX.AI pay-per-call billing (not implemented)
   server.py            thin MCP tool wrapper around core.analyze + core.file_extract
+demo/
+  site.py              public landing page + live demo (calls core.analyze directly, not MCP)
+  webapp.py            minimal local-only test form, for quick dev iteration
+  live_check.py        proves the deployed MCP endpoint works, as a real MCP client
 tests/
-  samples.py           4 synthetic, clearly-fake resume/JD pairs (incl. a prompt-injection attempt)
+  samples.py           synthetic, clearly-fake resume/JD pairs (incl. a prompt-injection attempt
+                        and a real-world zero-extractable-requirements regression case)
   test_analyze.py      end-to-end assertions against those pairs
   test_file_extract.py PDF/DOCX/TXT upload path, incl. a synthetic table-based DOCX
 ```
@@ -177,11 +187,20 @@ Currently deployed at **`https://resume-fit.145-241-206-88.sslip.io/mcp`**
   same-symptom "timeout during connect" error, so if this ever needs
   redeploying elsewhere, check both layers.
 
+The public demo site (`demo/site.py`) runs alongside it on the same box as
+its own `resume-fit-site.service`, listening internally on `0.0.0.0:8080`
+and reverse-proxied by the same Caddy instance at
+**`https://app.145-241-206-88.sslip.io`** (a second sslip.io hostname on the
+same IP, with its own auto-provisioned Let's Encrypt cert). It calls
+`core.analyze`/`core.file_extract` directly rather than going through MCP --
+it's a presentation layer for humans, not part of the ASP tool itself.
+
 ### Environment variables
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `PORT` | no | Port the streamable-http server binds to internally. Default `8000`. |
+| `PORT` | no | Port the MCP streamable-http server binds to internally. Default `8000`. |
+| `SITE_PORT` | no | Port the public demo site (`demo/site.py`) binds to internally. Default `8080`. |
 | `ANTHROPIC_API_KEY` | no | Enables LLM-phrased suggestions/summary (see above). Omit to run fully offline on templates. |
 
 ### Payment / billing integration point (not implemented)
