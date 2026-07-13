@@ -64,6 +64,7 @@ Excel           |  Advanced
 PowerPoint      |  Advanced
 Google Analytics|  Intermediate
 Social Media Marketing | Advanced
+Communication   |  Advanced
 
 Handled day to day marketing operations including copywriting, email marketing campaigns, content calendars, vendor coordination, budget tracking, event planning, and cross-functional collaboration with the sales and product teams on a wide range of ongoing seasonal promotional initiatives throughout the year.
 """

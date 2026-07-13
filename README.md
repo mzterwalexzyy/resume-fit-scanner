@@ -87,6 +87,19 @@ isn't silently dropped -- see `tests/test_file_extract.py`), but by the time
 This is the practical ceiling given the analysis runs on text, not a
 shortcut taken to save time.
 
+**Known limitation:** matching is literal, not semantic. A requirement only
+counts as present if the exact term (or a listed synonym, e.g. JS/JavaScript)
+appears in the resume text -- a resume that says "cross-functional
+collaboration with the sales team" gets no credit against a job description
+requiring "communication skills," even though a human reader would. This is
+the same trade-off the rest of the pipeline makes: an LLM "grading" the
+match holistically could catch that nuance, but wouldn't give you a
+reproducible, auditable score. It also means a real mismatch (a marketing
+resume against a data-scientist JD, say) can legitimately score very low or
+even 0% -- that's not a bug, it's an honest reflection of zero literal
+keyword overlap, for exactly the same reason many real ATS keyword scanners
+would flag it too.
+
 ## Project layout
 
 ```
