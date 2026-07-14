@@ -68,9 +68,11 @@ pipeline, in order:
    - renders them through fixed English templates (default, fully offline,
      what the test harness uses), or
    - if `ANTHROPIC_API_KEY` is set, asks Claude to rephrase the same facts
-     more naturally -- then verifies the response still contains the exact
-     score and every named missing keyword before using it, silently
-     falling back to the template otherwise.
+     more naturally; if unset but `OPENROUTER_API_KEY` is, does the same via
+     OpenRouter (free-tier models like Hermes 3 405B by default) -- either
+     way, it verifies the response still contains the exact score and every
+     named missing keyword before using it, silently falling back to the
+     template otherwise. Provider choice never changes what gets checked.
 
 The model never invents the score or the gap list; it can only reword facts
 that were already decided by steps 1-3.
@@ -149,7 +151,7 @@ Runs three synthetic cases and asserts on the output:
   rejection object, not a fabricated score.
 
 No API key is required to run this -- `core/phrasing.py` falls back to
-templates whenever `ANTHROPIC_API_KEY` is unset.
+templates whenever neither `ANTHROPIC_API_KEY` nor `OPENROUTER_API_KEY` is set.
 
 ## MCP server wrapper
 
@@ -214,7 +216,9 @@ it's a presentation layer for humans, not part of the ASP tool itself.
 |---|---|---|
 | `PORT` | no | Port the MCP streamable-http server binds to internally. Default `8000`. |
 | `SITE_PORT` | no | Port the public demo site (`demo/site.py`) binds to internally. Default `8080`. |
-| `ANTHROPIC_API_KEY` | no | Enables LLM-phrased suggestions/summary (see above). Omit to run fully offline on templates. |
+| `ANTHROPIC_API_KEY` | no | Enables LLM-phrased suggestions/summary via Claude (see above). Checked first. Omit to run fully offline on templates. |
+| `OPENROUTER_API_KEY` | no | Alternative to the above via OpenRouter, only used if `ANTHROPIC_API_KEY` is unset. |
+| `OPENROUTER_MODEL` | no | OpenRouter model ID. Default `nousresearch/hermes-3-llama-3.1-405b:free`. |
 
 ### Payment / billing integration point (not implemented)
 

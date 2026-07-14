@@ -7,13 +7,17 @@ extract.py / match.py / formatting.py. This module's only job is wording.
 
 By default it uses fixed templates (no network calls, fully offline and
 reproducible -- this is what runs in the test harness and whenever no LLM
-key is configured). If ANTHROPIC_API_KEY is set, it optionally asks Claude to
-rephrase the same facts more naturally, then verifies the model didn't change
-the score or drop a named gap before using its output; otherwise it silently
-falls back to the template.
+key is configured). If a provider key is set (ANTHROPIC_API_KEY, checked
+first, or OPENROUTER_API_KEY as a free-tier alternative), it optionally asks
+that model to rephrase the same facts more naturally, then verifies the
+model didn't change the score or drop a named gap before using its output;
+otherwise it silently falls back to the template. Provider choice never
+changes what gets checked -- only which model (if any) does the wording.
 """
+import json
 import os
 import re
+import urllib.request
 
 from core.extract import _INJECTION_PATTERNS, _SUSPICIOUS_CHARS
 
@@ -44,7 +48,10 @@ def _template_summary(fit_score: int):
     )
 
 
-def _llm_client():
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nousresearch/hermes-3-llama-3.1-405b:free")
+
+
+def _anthropic_call_fn():
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
@@ -52,17 +59,64 @@ def _llm_client():
         import anthropic
     except ImportError:
         return None
-    return anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key)
+
+    def call(prompt: str) -> str:
+        response = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+    return call
+
+
+def _openrouter_call_fn():
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+
+    def call(prompt: str) -> str:
+        body = json.dumps({
+            "model": OPENROUTER_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 800,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        return data["choices"][0]["message"]["content"].strip()
+
+    return call
+
+
+def _get_call_fn():
+    """Returns a `call(prompt: str) -> str` for whichever provider has a key
+    configured, preferring Anthropic, or None if neither is set. The rest of
+    this module treats the result as a black box -- provider swaps never
+    touch the verification logic below.
+    """
+    return _anthropic_call_fn() or _openrouter_call_fn()
 
 
 def _score_preserved(text: str, fit_score: int) -> bool:
     return str(fit_score) in text
 
 
-def _try_llm_rephrase(missing_keywords, formatting_fixes, fit_score, client):
-    """Ask Claude to rephrase the deterministic suggestions/summary more
-    naturally. Returns (suggestions, summary) or None on any failure, so
-    callers can fall back to templates without special-casing errors.
+def _try_llm_rephrase(missing_keywords, formatting_fixes, fit_score, call_fn):
+    """Ask the configured provider to rephrase the deterministic suggestions/
+    summary more naturally. Returns (suggestions, summary) or None on any
+    failure, so callers can fall back to templates without special-casing
+    errors.
     """
     template_suggestions = _template_suggestions(missing_keywords, formatting_fixes)
     template_summary = _template_summary(fit_score)
@@ -90,12 +144,7 @@ def _try_llm_rephrase(missing_keywords, formatting_fixes, fit_score, client):
     )
 
     try:
-        response = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = response.content[0].text.strip()
+        text = call_fn(prompt)
     except Exception:
         return None
 
@@ -129,9 +178,9 @@ def phrase_output(missing_keywords, formatting_fixes, fit_score: int):
     """Return (suggestions, summary), preferring an LLM rephrase when
     available and verifiably faithful, otherwise the deterministic template.
     """
-    client = _llm_client()
-    if client is not None:
-        result = _try_llm_rephrase(missing_keywords, formatting_fixes, fit_score, client)
+    call_fn = _get_call_fn()
+    if call_fn is not None:
+        result = _try_llm_rephrase(missing_keywords, formatting_fixes, fit_score, call_fn)
         if result is not None:
             return result
 
