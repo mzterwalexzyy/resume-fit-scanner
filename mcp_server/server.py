@@ -102,4 +102,24 @@ if __name__ == "__main__":
     # streamable-http is the transport OKX.AI's ASP endpoint check expects
     # (a real https:// URL) -- stdio only works for local single-process
     # testing (e.g. the `mcp.call_tool` checks used during development).
-    mcp.run(transport="streamable-http")
+    #
+    # Not using mcp.run(transport="streamable-http") here: it always builds
+    # the app freshly with no hook to add middleware. Instead this
+    # replicates run_streamable_http_async()'s own logic (see
+    # FastMCP.run_streamable_http_async source), just with the x402
+    # middleware layered onto the same Starlette app before serving.
+    import anyio
+    import uvicorn
+
+    from mcp_server.x402_middleware import X402Middleware
+
+    app = mcp.streamable_http_app()
+    app.add_middleware(X402Middleware, mcp_path=mcp.settings.streamable_http_path)
+
+    config = uvicorn.Config(
+        app,
+        host=mcp.settings.host,
+        port=mcp.settings.port,
+        log_level=mcp.settings.log_level.lower(),
+    )
+    anyio.run(uvicorn.Server(config).serve)

@@ -18,3 +18,5 @@ jobs:
         run: python -m tests.test_analyze
       - name: Run file-extraction tests
         run: python -m tests.test_file_extract
+      - name: Run x402 middleware tests
+        run: python -m tests.test_x402_middleware

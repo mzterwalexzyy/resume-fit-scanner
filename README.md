@@ -223,20 +223,37 @@ it's a presentation layer for humans, not part of the ASP tool itself.
 | `OPENROUTER_API_KEY` | no | Alternative via OpenRouter, checked last (only used if neither of the above is set). |
 | `OPENROUTER_MODEL` | no | OpenRouter model ID. Default `nousresearch/hermes-3-llama-3.1-405b:free`. |
 
-### Payment / billing integration point (not implemented)
+### Payment / billing: x402 challenge implemented, verification/settlement not
 
-Real pay-per-call billing is explicitly out of scope for this build -- per
-the brief, that's handled on the OKX.AI listing side. What we now know
-concretely (from OKX's own `onchainos-skills` docs, not guessed): paid
-A2MCP endpoints are expected to speak **x402** (a payment-required HTTP
-challenge/response scheme), with OKX recommending their Payment SDK
-(`okx-agent-payments-protocol`) for it -- not a generic "USDT on X Layer"
-integration as originally assumed. The one hook that exists today is
-`mcp_server/billing_stub.py`'s `verify_payment()`, called at the top of the
-`analyze_resume_fit` tool handler in `mcp_server/server.py`. It currently
-always returns `True` (every call is allowed through). Wiring in a real
-x402 challenge/verify step is the one place this needs to change --
-nothing else in `core/` or `server.py` does.
+OKX's ASP review flagged the endpoint returning HTTP 406 instead of the
+required 402 for an unauthenticated call to the paid tool -- their docs
+state paid A2MCP endpoints "must support x402" (a payment-required HTTP
+challenge/response scheme). `mcp_server/x402_middleware.py` fixes exactly
+that: an unauthenticated `tools/call` for `analyze_resume_fit` now gets a
+properly-shaped HTTP 402 response (`PAYMENT-REQUIRED` header, base64 JSON
+body with `scheme: "exact"`, X Layer network `eip155:196`, the
+community-recognized USD₮0 contract, this ASP's registered wallet as
+`payTo`, and the registered 0.1 USDT fee in atomic units). It runs as a raw
+ASGI middleware in front of FastMCP's own app -- see the module docstring
+for why not Starlette's `BaseHTTPMiddleware` (a body-replay/receive-queue
+conflict on this Starlette version).
+
+**What's deliberately still not implemented:** cryptographic verification
+of a presented payment proof, and on-chain settlement. Any request carrying
+*any* `Authorization`/`X-PAYMENT` header is let through unverified today.
+Building real verification + settlement means this server holding gas
+funds and broadcasting transactions on its own -- financial-transaction
+code that deserves its own deliberate scope, not a silent add-on to a
+formatting fix. `mcp_server/billing_stub.py`'s `verify_payment()` (called
+inside the tool handler, after the middleware's gate) is where that would
+wire in.
+
+**What stays free, so a real MCP client can still discover the tool before
+paying:** the `initialize`/`tools/list` handshake, and the `ping`
+health-check tool. Everything else to the MCP path -- including a bare
+GET/POST with no recognizable MCP shape (what a compliance probe sends) --
+requires a payment-shaped header. See `tests/test_x402_middleware.py` for
+the full behavior matrix, exercised against the middleware directly.
 
 ## Prompt-injection guardrails
 
