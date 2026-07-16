@@ -49,6 +49,7 @@ def _template_summary(fit_score: int):
 
 
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nousresearch/hermes-3-llama-3.1-405b:free")
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "z-ai/glm-5.2")
 
 
 def _anthropic_call_fn():
@@ -99,13 +100,44 @@ def _openrouter_call_fn():
     return call
 
 
+def _nvidia_call_fn():
+    api_key = os.environ.get("NVIDIA_API_KEY")
+    if not api_key:
+        return None
+
+    def call(prompt: str) -> str:
+        body = json.dumps({
+            "model": NVIDIA_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 800,
+            "stream": False,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        # NVIDIA's hosted 405B-scale models can take well over 30s even for
+        # a trivial prompt (observed ~19s for a 2-token reply) -- a longer
+        # timeout here avoids treating normal latency as a failure.
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+        return data["choices"][0]["message"]["content"].strip()
+
+    return call
+
+
 def _get_call_fn():
     """Returns a `call(prompt: str) -> str` for whichever provider has a key
-    configured, preferring Anthropic, or None if neither is set. The rest of
-    this module treats the result as a black box -- provider swaps never
-    touch the verification logic below.
+    configured, tried in this order: Anthropic, NVIDIA, OpenRouter. Returns
+    None if none are set. The rest of this module treats the result as a
+    black box -- provider swaps never touch the verification logic below.
     """
-    return _anthropic_call_fn() or _openrouter_call_fn()
+    return _anthropic_call_fn() or _nvidia_call_fn() or _openrouter_call_fn()
 
 
 def _score_preserved(text: str, fit_score: int) -> bool:

@@ -9,6 +9,7 @@ underneath is byte-for-byte the same code the deployed MCP server runs.
 Run with:  py demo/site.py            (serves on 0.0.0.0:$PORT, default 8080)
 """
 import base64
+import html
 import json
 import os
 import sys
@@ -35,6 +36,20 @@ SAMPLES_JSON = json.dumps({
     },
 })
 
+# The hero's preview card shows this, computed for real from the repo's own
+# strong_match sample via the exact same analyze_resume_fit() the live tool
+# uses -- not a fabricated stat. Recomputed on every server start, so it
+# always reflects whatever the current scoring logic actually produces.
+_hero_resume, _hero_jd = PAIRS["strong_match"]
+HERO_RESULT = analyze_resume_fit(_hero_resume, _hero_jd)
+HERO_SCORE = HERO_RESULT["fit_score"]
+HERO_MISSING = HERO_RESULT["missing_keywords"][:3]
+HERO_MISSING_EXTRA = max(0, len(HERO_RESULT["missing_keywords"]) - len(HERO_MISSING))
+HERO_SUMMARY = HERO_RESULT["summary"]
+HERO_CHIPS = "".join(f'<span class="hero-chip">{html.escape(k)}</span>' for k in HERO_MISSING)
+if HERO_MISSING_EXTRA:
+    HERO_CHIPS += f'<span class="hero-chip more">+{HERO_MISSING_EXTRA} more</span>'
+
 PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -42,6 +57,15 @@ PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Resume Fit Scanner -- OKX.AI Agentic Service Provider</title>
 <link rel="icon" type="image/png" href="/assets/favicon.png">
+<script>
+(function () {
+  var t = localStorage.getItem('theme');
+  if (t !== 'light' && t !== 'dark') {
+    t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', t);
+})();
+</script>
 <style>
 @font-face {
   font-family: "Manrope";
@@ -162,13 +186,34 @@ button, input, textarea { font-family: inherit; }
   border-radius: 999px; font-weight: 700; font-size: 13.5px;
 }
 .btn-primary:hover { opacity: 0.88; text-decoration: none; }
+.theme-toggle {
+  width: 36px; height: 36px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); display: flex; align-items: center;
+  justify-content: center; cursor: pointer; flex-shrink: 0;
+}
+.theme-toggle:hover { border-color: var(--accent); }
+.theme-toggle .icon-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
 @media (max-width: 560px) {
   .nav-links a:not(.btn-primary) { display: none; }
   .brand { font-size: 15px; }
   .btn-primary { padding: 8px 13px; font-size: 12.5px; }
 }
 
-.intro { max-width: 760px; margin: 0 auto; padding: 56px 24px 28px; text-align: center; }
+.hero { position: relative; overflow: hidden; }
+.hero-blob {
+  position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.35; z-index: -1;
+  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+}
+.hero-blob.b1 { width: 420px; height: 420px; top: -160px; right: -80px; }
+.hero-blob.b2 { width: 320px; height: 320px; bottom: -140px; left: -100px; opacity: 0.22; }
+.hero-inner {
+  max-width: 1160px; margin: 0 auto; padding: 60px 24px 40px;
+  display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 48px; align-items: center;
+}
+@media (max-width: 900px) { .hero-inner { grid-template-columns: 1fr; padding-top: 40px; } }
+
 .eyebrow {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12.5px; font-weight: 700; color: var(--accent);
@@ -176,8 +221,54 @@ button, input, textarea { font-family: inherit; }
   margin-bottom: 18px; letter-spacing: 0.02em;
 }
 .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--score-good); }
-.intro h1 { font-size: 34px; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 14px; }
-.intro .lede { color: var(--text-muted); font-size: 16px; max-width: 560px; margin: 0 auto; }
+.hero-copy h1 { font-size: 40px; font-weight: 800; letter-spacing: -0.015em; margin-bottom: 16px; }
+.hero-copy .lede { color: var(--text-muted); font-size: 16.5px; max-width: 480px; margin: 0 0 26px; }
+.hero-ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn-primary-lg {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: white;
+  padding: 13px 22px; border-radius: 10px; font-weight: 700; font-size: 14.5px;
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.btn-primary-lg:hover { opacity: 0.92; text-decoration: none; }
+.btn-ghost {
+  padding: 13px 20px; border-radius: 10px; font-weight: 700; font-size: 14.5px;
+  color: var(--text); border: 1px solid var(--border);
+}
+.btn-ghost:hover { border-color: var(--accent); text-decoration: none; }
+
+.hero-visual { display: flex; justify-content: center; }
+.hero-card {
+  width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 18px; box-shadow: var(--shadow); padding: 20px;
+}
+.hero-card-label {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; font-weight: 700; color: var(--text-muted); margin-bottom: 14px;
+}
+.hero-card-tag {
+  font-size: 10.5px; font-weight: 700; color: var(--accent); background: var(--accent-soft);
+  padding: 3px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.hero-ring {
+  width: 84px; height: 84px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: conic-gradient(var(--score-good) calc(var(--hero-score) * 3.6deg), var(--border) 0);
+}
+.hero-ring-inner {
+  width: 66px; height: 66px; border-radius: 50%; background: var(--surface);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "Manrope", sans-serif; font-weight: 800; font-size: 20px;
+  font-variant-numeric: tabular-nums; color: var(--score-good);
+}
+.hero-card-top { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.hero-card-summary { font-size: 13.5px; font-weight: 600; line-height: 1.4; }
+.hero-card-sub { font-size: 11.5px; color: var(--text-muted); font-weight: 600; margin: 2px 0 14px; }
+.hero-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.hero-chip {
+  font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+  background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-border);
+}
+.hero-chip.more { background: var(--bg); color: var(--text-muted); border-color: var(--border); }
 
 .app-grid {
   max-width: 1080px; margin: 0 auto; padding: 24px 24px 64px;
@@ -308,15 +399,49 @@ textarea::placeholder { color: var(--text-muted); }
     <div class="nav-links">
       <a href="#how-it-works">How it's scored</a>
       <a href="https://github.com/mzterwalexzyy/resume-fit-scanner" target="_blank" rel="noopener">GitHub</a>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      </button>
       <a href="#app" class="btn-primary">Scan your resume</a>
     </div>
   </div>
 </nav>
 
-<header class="intro">
-  <span class="eyebrow"><span class="dot"></span>Live OKX.AI Agentic Service Provider &middot; Agent #4956 &middot; X Layer</span>
-  <h1>Does your resume actually match the job?</h1>
-  <p class="lede">Paste your resume and a job description below. Every keyword, formatting flag, and score is computed by rule-based matching, not guessed by a model &mdash; nothing is stored after you get your result.</p>
+<header class="hero">
+  <div class="hero-blob b1"></div>
+  <div class="hero-blob b2"></div>
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <span class="eyebrow"><span class="dot"></span>Live OKX.AI Agentic Service Provider &middot; Agent #4956 &middot; X Layer</span>
+      <h1>Does your resume actually match the job?</h1>
+      <p class="lede">Paste your resume and a job description below. Every keyword, formatting flag, and score is computed by rule-based matching, not guessed by a model &mdash; nothing is stored after you get your result.</p>
+      <div class="hero-ctas">
+        <a href="#app" class="btn-primary-lg">Scan your resume</a>
+        <a href="#how-it-works" class="btn-ghost">See how scoring works</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="hero-card">
+        <div class="hero-card-label">
+          <span>Example run</span>
+          <span class="hero-card-tag">Real output, our own test sample</span>
+        </div>
+        <div class="hero-card-top">
+          <div class="hero-ring" style="--hero-score: __HERO_SCORE__">
+            <div class="hero-ring-inner">__HERO_SCORE__%</div>
+          </div>
+          <div>
+            <div class="hero-card-summary">__HERO_SUMMARY__</div>
+          </div>
+        </div>
+        <div class="hero-card-sub">Missing keywords</div>
+        <div class="hero-chip-row">
+          __HERO_CHIPS__
+        </div>
+      </div>
+    </div>
+  </div>
 </header>
 
 <main id="app" class="app-grid">
@@ -393,6 +518,13 @@ textarea::placeholder { color: var(--text-muted); }
 </footer>
 
 <script>
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+});
+
 const SAMPLES = __SAMPLES_JSON__;
 
 const resumeText = document.getElementById('resume_text');
@@ -583,6 +715,9 @@ scanBtn.addEventListener('click', async () => {
 """
 
 PAGE = PAGE.replace("__SAMPLES_JSON__", SAMPLES_JSON)
+PAGE = PAGE.replace("__HERO_SCORE__", str(HERO_SCORE))
+PAGE = PAGE.replace("__HERO_SUMMARY__", html.escape(HERO_SUMMARY))
+PAGE = PAGE.replace("__HERO_CHIPS__", HERO_CHIPS)
 PAGE_BYTES = PAGE.encode("utf-8")
 
 def _load_asset(filename):
