@@ -82,7 +82,18 @@ def main():
     print("status:", resp.status_code)
     _assert(resp.status_code == 402, f"{GATED_TOOL_NAME} must require payment when none is presented")
 
-    print(f"\n=== tools/call {GATED_TOOL_NAME} WITH a payment header present ===")
+    print(f"\n=== tools/call {GATED_TOOL_NAME} replayed with PAYMENT-SIGNATURE (the correct x402 v2 replay header) ===")
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": GATED_TOOL_NAME}},
+        headers={"payment-signature": "dummy-test-proof"},
+    )
+    print("status:", resp.status_code)
+    _assert(resp.status_code == 200,
+            "PAYMENT-SIGNATURE is the actual replay header for this challenge shape (per OKX's own docs) -- "
+            "regression check for the bug their review reported: a correctly-signed replay was still getting re-challenged")
+
+    print(f"\n=== tools/call {GATED_TOOL_NAME} WITH an Authorization header present (also accepted) ===")
     resp = client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": GATED_TOOL_NAME}},

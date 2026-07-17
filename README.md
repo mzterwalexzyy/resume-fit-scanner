@@ -238,15 +238,25 @@ ASGI middleware in front of FastMCP's own app -- see the module docstring
 for why not Starlette's `BaseHTTPMiddleware` (a body-replay/receive-queue
 conflict on this Starlette version).
 
+**First round of OKX's review turned up a second bug:** the replay after a
+successful payment was still getting re-challenged with another 402. Root
+cause was the middleware only recognizing `Authorization` / `X-PAYMENT`
+headers, but the correct replay header for this `PAYMENT-REQUIRED`
+(accepts-based v2) challenge shape is **`PAYMENT-SIGNATURE`** -- confirmed
+from OKX's own `onchainos-skills` docs (`references/accepts-schemes.md`:
+"Replay = resend the original request with `<header_name>:
+<authorization_header>` (here `PAYMENT-SIGNATURE`)"), not something this
+project guessed at. `PAYMENT_HEADER_NAMES` in the middleware now checks all
+three (`payment-signature`, `x-payment`, `authorization`).
+
 **What's deliberately still not implemented:** cryptographic verification
 of a presented payment proof, and on-chain settlement. Any request carrying
-*any* `Authorization`/`X-PAYMENT` header is let through unverified today.
-Building real verification + settlement means this server holding gas
-funds and broadcasting transactions on its own -- financial-transaction
-code that deserves its own deliberate scope, not a silent add-on to a
-formatting fix. `mcp_server/billing_stub.py`'s `verify_payment()` (called
-inside the tool handler, after the middleware's gate) is where that would
-wire in.
+*any* of those three headers is let through unverified today. Building real
+verification + settlement means this server holding gas funds and
+broadcasting transactions on its own -- financial-transaction code that
+deserves its own deliberate scope, not a silent add-on to a formatting fix.
+`mcp_server/billing_stub.py`'s `verify_payment()` (called inside the tool
+handler, after the middleware's gate) is where that would wire in.
 
 **What stays free, so a real MCP client can still discover the tool before
 paying:** the `initialize`/`tools/list` handshake, and the `ping`

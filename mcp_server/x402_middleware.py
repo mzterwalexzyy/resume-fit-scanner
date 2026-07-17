@@ -12,8 +12,12 @@ challenge instead.
 
 Scope, deliberately: this issues the CHALLENGE only. It does not
 cryptographically verify a payment signature and does not settle funds
-on-chain -- any request carrying an Authorization or X-PAYMENT header is
-let through unverified. Real verification/settlement remains the
+on-chain -- any request carrying a PAYMENT-SIGNATURE (the correct replay
+header for this PAYMENT-REQUIRED/accepts-based v2 challenge shape, per
+OKX's own onchainos-skills docs), X-PAYMENT (legacy v1), or Authorization
+(the separate WWW-Authenticate/MPP charge scheme this endpoint doesn't
+issue, checked anyway for safety) header is let through unverified. Real
+verification/settlement remains the
 integration point already marked in billing_stub.py ("leave a clearly
 marked integration point, do not implement real payment/billing logic
 yourself" was the original scope). Building full EIP-3009 signature
@@ -53,6 +57,19 @@ X402_MAX_TIMEOUT_SECONDS = 300
 GATED_TOOL_NAME = "analyze_resume_fit"
 FREE_TOOL_NAMES = {"ping"}
 FREE_RPC_METHODS = {"initialize", "notifications/initialized", "tools/list"}
+
+# PAYMENT-SIGNATURE is the correct replay header for this PAYMENT-REQUIRED
+# (accepts-based v2) challenge shape -- confirmed in OKX's own
+# onchainos-skills docs (references/accepts-schemes.md: "Replay = resend
+# the original request with <header_name>: <authorization_header> (here
+# PAYMENT-SIGNATURE)"). The initial version of this middleware only checked
+# `authorization` / `x-payment`, so a correctly-signed replay never got
+# recognized and was re-challenged with another 402 -- exactly the bug OKX's
+# review reported. X-PAYMENT (legacy v1) and Authorization (the separate
+# WWW-Authenticate/MPP charge scheme) are also accepted, since presence of
+# any of them is a reasonable signal a payment was attempted -- this module
+# does not verify any of them cryptographically regardless (see docstring).
+PAYMENT_HEADER_NAMES = (b"payment-signature", b"x-payment", b"authorization")
 
 
 def build_challenge(resource_url: str) -> dict:
@@ -125,7 +142,7 @@ class X402Middleware:
             return
 
         headers = scope["headers"]
-        if _get_header(headers, b"authorization") or _get_header(headers, b"x-payment"):
+        if any(_get_header(headers, name) for name in PAYMENT_HEADER_NAMES):
             await self.app(scope, receive, send)
             return
 
