@@ -48,6 +48,11 @@ def main():
     accepts = body["accepts"][0]
     _assert(accepts["scheme"] == "exact", "expected the 'exact' x402 scheme")
     _assert(accepts["network"] == "eip155:196", "expected X Layer (eip155:196)")
+    # Regression check for an OKX review finding: `maxAmountRequired` is the
+    # "upto" scheme's field (a variable cap); "exact" (a fixed price, which
+    # is what this ASP actually charges) must use `amount` instead.
+    _assert("amount" in accepts, "'exact' scheme must carry 'amount', not 'maxAmountRequired'")
+    _assert("maxAmountRequired" not in accepts, "'maxAmountRequired' is only valid for scheme 'upto'")
     payment_header = resp.headers.get("payment-required")
     _assert(payment_header, "expected a PAYMENT-REQUIRED header alongside the 402")
 

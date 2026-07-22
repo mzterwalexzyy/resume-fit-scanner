@@ -82,7 +82,11 @@ def build_challenge(resource_url: str) -> dict:
                 "network": X402_NETWORK,
                 "asset": X402_ASSET,
                 "payTo": X402_PAY_TO,
-                "maxAmountRequired": X402_AMOUNT_ATOMIC,
+                # "exact" takes a fixed `amount` -- `maxAmountRequired` is
+                # the "upto" scheme's field (a variable cap, not a fixed
+                # price). Our fee is fixed (0.1 USDT/call), so "exact" +
+                # `amount` is the correct pairing, per OKX's review finding.
+                "amount": X402_AMOUNT_ATOMIC,
                 "maxTimeoutSeconds": X402_MAX_TIMEOUT_SECONDS,
                 "resource": resource_url,
                 "description": "Resume/Job-Fit Scanner: analyze_resume_fit (pay-per-call)",

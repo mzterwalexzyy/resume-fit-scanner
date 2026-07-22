@@ -249,6 +249,12 @@ from OKX's own `onchainos-skills` docs (`references/accepts-schemes.md`:
 project guessed at. `PAYMENT_HEADER_NAMES` in the middleware now checks all
 three (`payment-signature`, `x-payment`, `authorization`).
 
+**Second round turned up a field/scheme mismatch:** the challenge used
+`scheme: "exact"` together with `maxAmountRequired`, but that field belongs
+to the `"upto"` scheme (a variable cap), not `"exact"` (a fixed price).
+Since this ASP charges a fixed 0.1 USDT/call, `"exact"` is the correct
+scheme -- it now carries `amount` instead.
+
 **What's deliberately still not implemented:** cryptographic verification
 of a presented payment proof, and on-chain settlement. Any request carrying
 *any* of those three headers is let through unverified today. Building real
